@@ -162,6 +162,16 @@ streamlit run web/app.py
 ```
 --fla
 ```
+
+## 8.自定义Loss Mask
+```bash
+--loss_mask qa/pad/se/custom
+```
+- qa: QA对话的Mask，只使用`Assistant:`及其后面的内容计算损失
+- pad: 填充0至最大长度
+- se: 自定义Mask，使用`--mask_id`指定Mask，json格式，如`{"mask0":"User:", "mask1":"Assistant:"}`
+- custom: 自定义Mask，支持设置自定义多个起始序列，使用`--mask_id`指定Mask，json格式，如`{"ignore":["User:"], "preserve":["Assistant:"]}`
+
 ## GPU支持情况
 
 - NVIDIA: CUDA

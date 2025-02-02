@@ -19,6 +19,7 @@ from .utils import MaybeIsPrime
 from .args_type import TrainingArgs
 from rwkv.utils import PIPELINE
 from .rwkv_datasets.SFTdataset import sft_dataset
+from typing import List
 import time
 pipeline = PIPELINE('rwkv6', "rwkv_vocab_v20230424")
 
@@ -323,10 +324,14 @@ class MyDataset(Dataset):
                 t2 = pipeline.encode(args.mask_id['mask1'])
                 mask = self.generate_mask(dix, t1, t2, min_len)
                 return x, y, mask
-
+            if args.loss_mask == 'custom':
+                ignored_tokens = [pipeline.encode(token) for token in iter(args.mask_id['ignore'])]
+                preserved_tokens = [pipeline.encode(token) for token in iter(args.mask_id['preserve'])]
+                mask = self.create_mask_v2(dix, ignored_tokens, preserved_tokens, min_len)
+                return x, y, mask
             return x, y
-
-    def create_mask(self, seq, token1, token2, min_len):
+    @staticmethod
+    def create_mask(seq, token1, token2, min_len):
         # 找到所有特殊标记的索引
         indices1 = []
         for i in range(min_len - len(token1) + 1):
@@ -349,7 +354,41 @@ class MyDataset(Dataset):
         if torch.sum(mask) == 0:
             mask[:min_len - 1] = 1
         return mask[1:]
+    @staticmethod
+    def create_mask_v2(seq, ignore_sos:List[List[int]], preserve_sos:List[List[int]], min_len):
+        """Create mask for seq with ignore_sos and preserve_sos.
 
+        Args:
+            seq: The input sequence.
+            ignore_sos (List[List[int]]): a list of tokenized start sequences expected to be ignored.
+            preserve_sos (List[List[int]]): a list of tokenized start sequences expected to be preserved.
+            min_len: The minimum length of the sequence.
+        """
+        # Find the indices of all special tokens
+        ignore_indices = []
+        preserve_indices = []
+        for ignore_token in iter(ignore_sos):
+            for i in range(min_len - len(ignore_token) + 1):
+                if np.array_equal(seq[i:i + len(ignore_token)], ignore_token):
+                    ignore_indices.append(i)
+        for preserve_token in iter(preserve_sos):
+            for i in range(min_len - len(preserve_token) + 1):
+                if np.array_equal(seq[i:i + len(preserve_token)], preserve_token):
+                    preserve_indices.append(i)
+        mask = torch.zeros(seq.shape)
+        select = 0
+        for i in range(min_len):
+            if i in ignore_indices:
+                select = 0
+            elif i in preserve_indices:
+                select = 1
+            mask[i] = select
+        if torch.sum(mask) == 0:
+            mask[:min_len - 1] = 1
+        return mask[1:]
+                    
+            
+    @staticmethod
     def generate_mask(seq, token1, token2, min_len):
         mask = torch.zeros(seq.shape)  # 初始化mask列表，默认全为0
         current_mask_value = 0  # 初始状态下，所有位置的mask值为0
@@ -373,3 +412,44 @@ class MyDataset(Dataset):
         if torch.sum(mask) == 0:
             mask[:min_len - 1] = 1
         return mask[1:]
+    
+    @staticmethod
+    def generate_mask_v2(seq, ignore_sos:List[List[int]], preserve_sos:List[List[int]], min_len):
+        """Generate mask for seq with ignore_sos and preserve_sos.
+        
+        Args:
+            seq: The input sequence.
+            ignore_sos (List[List[int]]): a list of tokenized start sequences expected to be ignored.
+            preserve_sos (List[List[int]]): a list of tokenized start sequences expected to be preserved.
+            min_len: The minimum length of the sequence.
+        """
+        mask = torch.zeros(seq.shape)
+        current_mask_value = 0
+        i = 0
+        ignore_flag=False
+        preserve_flag=False
+        while i < min_len:
+            for ignore_token in iter(ignore_sos):
+                if seq[i:i + len(ignore_token)] == ignore_token:
+                    current_mask_value = 0
+                    ignore_flag=True
+                    for j in range(len(ignore_token)):
+                        mask[i + j] = current_mask_value
+                    i += len(ignore_token)
+                    break
+            if not ignore_flag:
+                for preserve_token in iter(preserve_sos):
+                    if seq[i:i + len(preserve_token)] == preserve_token:
+                        current_mask_value = 1
+                        preserve_flag=True
+                        for j in range(len(preserve_token)):
+                            mask[i + j] = current_mask_value
+                        i += len(preserve_token)
+                        break
+            else:
+                mask[i] = current_mask_value
+                i += 1
+        if torch.sum(mask) == 0:
+            mask[:min_len - 1] = 1
+        return mask[1:]
+
